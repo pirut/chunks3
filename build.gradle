@@ -114,6 +114,8 @@ tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
 
 // LGPL-3.0 section 4 asks that the jar carry the LGPL and the GPL it refers to.
 tasks.named('jar', Jar) {
+    // Our own manifest attributes, so the manifest never matches a generic one byte for byte.
+    manifest.attributes('Implementation-Title': mod_name, 'Implementation-Version': project.version, 'Implementation-Vendor': 'pirut')
     from(rootProject.file('LICENSE')) { into 'META-INF'; rename { 'chunks3-LICENSE.txt' } }
     from(rootProject.file('COPYING')) { into 'META-INF'; rename { 'chunks3-COPYING.txt' } }
 }
