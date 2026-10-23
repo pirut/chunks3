@@ -1,0 +1,138 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+    id 'net.neoforged.moddev' version '2.0.148'
+}
+
+version = mod_version
+group = mod_group_id
+
+base { archivesName = mod_id }
+
+// Mojang ships Java 21 to players with 1.21.1.
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+java.withSourcesJar()
+
+// Iris and Sodium are compile-only: the far renderer talks to them when a player has them installed,
+// and nothing of theirs is bundled. Supply the exact tested files (CI fetches them from Modrinth).
+def shaderInput = { String property, String variable, String earthVariable ->
+    providers.gradleProperty(property).orElse(providers.environmentVariable(variable)).orElse(providers.environmentVariable(earthVariable))
+}
+def shaderInputs = [
+        iris  : [file: shaderInput('irisJar', 'CHUNKS3_IRIS_JAR', 'EARTH_INSTALLED_IRIS_JAR'), size: 2540723L,
+                 sha256: '60d5f8bf52f25e9986440f4a4270a6bd986d9cff994510e1108ac1547063b314'],
+        sodium: [file: shaderInput('sodiumJar', 'CHUNKS3_SODIUM_JAR', 'EARTH_INSTALLED_SODIUM_JAR'), size: 1291422L,
+                 sha256: 'dc2838d5538db39414171fe86586ab89d1a30d2fd97f59229cc44cf3777f569d'],
+]
+def verifyShaderInputs = tasks.register('verifyShaderInputs') {
+    group = 'verification'
+    description = 'Checks the separately supplied Iris and Sodium jars against their tested SHA-256.'
+    shaderInputs.each { name, spec -> inputs.property(name + '_sha256', spec.sha256) }
+    doLast {
+        shaderInputs.each { name, spec ->
+            if (!spec.file.isPresent())
+                throw new GradleException('Supply the ' + name + ' jar with -P' + name + 'Jar=<path> or CHUNKS3_' + name.toUpperCase(Locale.ROOT) + '_JAR (see README.md).')
+            def supplied = file(spec.file.get())
+            if (!supplied.isFile() || supplied.length() != spec.size)
+                throw new GradleException('Missing or unsupported ' + name + ' jar: ' + supplied)
+            def actual = java.security.MessageDigest.getInstance('SHA-256').digest(supplied.bytes).encodeHex().toString()
+            if (actual != spec.sha256) throw new GradleException(name + ' jar SHA-256 mismatch: expected ' + spec.sha256 + ', got ' + actual)
+        }
+    }
+}
+dependencies {
+    shaderInputs.each { name, spec ->
+        compileOnly files(spec.file.map { file(it) })
+        testCompileOnly files(spec.file.map { file(it) })
+    }
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+tasks.named('compileJava') { dependsOn verifyShaderInputs }
+tasks.named('compileTestJava') { dependsOn verifyShaderInputs }
+
+// The jar records the commit it was built from, for the local performance log.
+def sourceCommit = providers.gradleProperty('buildCommit').getOrNull()
+if (sourceCommit == null) {
+    try {
+        sourceCommit = providers.exec { commandLine 'git', 'rev-parse', 'HEAD'; ignoreExitValue = true }.standardOutput.asText.get().trim()
+    } catch (Exception ignored) {
+        sourceCommit = 'unknown'
+    }
+}
+if (!(sourceCommit ==~ /[a-f0-9]{40}/)) sourceCommit = 'unknown'
+def generateBuildIdentity = tasks.register('generateBuildIdentity') {
+    def out = layout.buildDirectory.file("generated/buildIdentity/META-INF/${mod_id}-build.properties")
+    inputs.property('commit', sourceCommit)
+    inputs.property('version', project.version.toString())
+    outputs.file(out)
+    doLast {
+        def target = out.get().asFile
+        target.parentFile.mkdirs()
+        target.text = 'commit=' + sourceCommit + '\nversion=' + project.version + '\ndiagnostics=true\n'
+    }
+}
+sourceSets.main.resources.srcDir layout.buildDirectory.dir('generated/buildIdentity')
+tasks.named('processResources') { dependsOn generateBuildIdentity }
+
+var generateModMetadata = tasks.register('generateModMetadata', ProcessResources) {
+    var replaceProperties = [
+            minecraft_version_range: minecraft_version_range, neo_version_range: neo_version_range,
+            loader_version_range: loader_version_range, mod_id: mod_id, mod_name: mod_name,
+            mod_license: mod_license, mod_version: mod_version,
+    ]
+    inputs.properties replaceProperties
+    expand replaceProperties
+    from 'src/main/templates'
+    into layout.buildDirectory.dir('generated/sources/modMetadata')
+}
+sourceSets.main.resources.srcDir generateModMetadata
+
+neoForge {
+    version = project.neo_version
+    parchment {
+        mappingsVersion = project.parchment_mappings_version
+        minecraftVersion = project.parchment_minecraft_version
+    }
+    runs {
+        client { client(); jvmArgument '-Xmx4G' }
+        server { server(); programArgument '--nogui' }
+        configureEach { logLevel = org.slf4j.event.Level.INFO }
+    }
+    mods {
+        "${mod_id}" { sourceSet(sourceSets.main) }
+    }
+    unitTest {
+        enable()
+        testedMod = mods."${mod_id}"
+    }
+    ideSyncTask generateModMetadata
+}
+
+tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
+
+// LGPL-3.0 section 4 asks that the jar carry the LGPL and the GPL it refers to.
+tasks.named('jar', Jar) {
+    from(rootProject.file('LICENSE')) { into 'META-INF'; rename { 'chunks3-LICENSE.txt' } }
+    from(rootProject.file('COPYING')) { into 'META-INF'; rename { 'chunks3-COPYING.txt' } }
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+    systemProperty 'chunks3.test.projectDirectory', layout.projectDirectory.asFile.absolutePath
+    systemProperty 'chunks3.test.minecraftJar', layout.buildDirectory.file("moddev/artifacts/neoforge-${neo_version}-merged.jar").get().asFile.absolutePath
+    testLogging { events 'passed', 'skipped', 'failed' }
+}
+
+publishing {
+    publications {
+        register('mavenJava', MavenPublication) {
+            artifactId = mod_id
+            from components.java
+        }
+    }
+    repositories {
+        maven { url = layout.buildDirectory.dir('repo') }
+    }
+}
