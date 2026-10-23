@@ -66,15 +66,15 @@ def generateBuildIdentity = tasks.register('generateBuildIdentity') {
     def out = layout.buildDirectory.file("generated/buildIdentity/META-INF/${mod_id}-build.properties")
     inputs.property('commit', sourceCommit)
     inputs.property('version', project.version.toString())
-    outputs.file(out)
+    outputs.dir(layout.buildDirectory.dir('generated/buildIdentity'))
     doLast {
         def target = out.get().asFile
         target.parentFile.mkdirs()
         target.text = 'commit=' + sourceCommit + '\nversion=' + project.version + '\ndiagnostics=true\n'
     }
 }
-sourceSets.main.resources.srcDir layout.buildDirectory.dir('generated/buildIdentity')
-tasks.named('processResources') { dependsOn generateBuildIdentity }
+// Through the task, so every consumer of the resources (jar, sourcesJar) runs it first.
+sourceSets.main.resources.srcDir generateBuildIdentity
 
 var generateModMetadata = tasks.register('generateModMetadata', ProcessResources) {
     var replaceProperties = [
