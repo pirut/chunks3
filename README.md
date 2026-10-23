@@ -20,6 +20,9 @@ mods can build on it. It is early: the API below can still change between alpha 
 Cubic.register(MY_LEVEL, (level, folder) -> new MyGenerator(level.getSeed()));
 ```
 
+The `example/` mod does exactly this in one class, with the library's Highlands test generator:
+`./gradlew :example:runClient`, make a world and type `/cubes enter`.
+
 A generator implements `io.github.pirut.chunks3.gen.CubeGenerator`. The required part is small:
 `generate` (one 16³ cube), `surfaceY`, `farColumn` (the distant terrain at a level of detail) and
 `seaLevel`. Everything else (structures, biome lookup, data prefetching, landing spots) has a default.
