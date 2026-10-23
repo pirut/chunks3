@@ -9,4 +9,5 @@ plugins {
 }
 
 rootProject.name = 'chunks3'
-include 'example'
+// The example mod is left out when another build (such as Earth Platform's) includes this one.
+if (gradle.parent == null) include 'example'
