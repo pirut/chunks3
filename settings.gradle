@@ -1,0 +1,13 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+    }
+}
+
+plugins {
+    id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+
+rootProject.name = 'chunks3'
+// The example mod is left out when another build (such as Earth Platform's) includes this one.
+if (gradle.parent == null) include 'example'
